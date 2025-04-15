@@ -2929,6 +2929,17 @@ bool isAduplicateSignal(uint64_t value) {
 #endif
 
 void receivingDATA(const char* topicOri, const char* datacallback) {
+    
+  Log.notice(F("receivingDATA: %s %s" CR),topicOri, datacallback);
+  if (XtoBT(topicOri, datacallback))
+  {
+    return;
+  }
+  if (!String(datacallback).startsWith("{"))
+  {
+    return;
+  }
+  
   std::string strTopicOri = topicOri;
   StaticJsonDocument<JSON_MSG_BUFFER_MAX> jsonBuffer;
   JsonObject jsondata = jsonBuffer.to<JsonObject>();

@@ -27,6 +27,7 @@
 #define config_BT_h
 
 extern void setupBT();
+extern bool XtoBT(const char* topicOri, const char* datacallback);
 extern void XtoBT(const char* topicOri, JsonObject& RFdata);
 extern void launchBTDiscovery(bool overrideDiscovery);
 extern void stopProcessing(bool deinit);
@@ -211,8 +212,8 @@ struct BLEAction {
   std::string value;
   char addr[18];
   int addr_type;
-  NimBLEUUID service;
-  NimBLEUUID characteristic;
+  NimBLEUUID service = NimBLEUUID();
+  NimBLEUUID characteristic  = NimBLEUUID();
   bool write;
   bool complete;
   uint8_t ttl;
@@ -230,6 +231,7 @@ struct BLEdevice {
   bool connect;
   int sensorModel_id;
   unsigned long lastUpdate;
+  char command_topic[128];
 };
 
 class BLEconectable {
@@ -240,6 +242,7 @@ public:
     MHO_C401,
     DT24_BLE,
     XMWSDJ04MMC,
+    STANDART,
     MAX,
   };
 };

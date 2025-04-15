@@ -724,7 +724,10 @@ void BLEconnect() {
             LYWSD03MMC_connect BLEclient(addr);
             BLEclient.processActions(BLEactions);
             BLEclient.publishData();
-          } else if (p->sensorModel_id == BLEconectable::id::DT24_BLE) {
+          } else if (p->sensorModel_id == BLEconectable::id::STANDART) {
+            Stand_connect BLEclient(addr);
+            BLEclient.processActions(BLEactions);
+          }  else if (p->sensorModel_id == BLEconectable::id::DT24_BLE) {
             DT24_connect BLEclient(addr);
             BLEclient.processActions(BLEactions);
             BLEclient.publishData();
@@ -913,6 +916,66 @@ boolean valid_service_data(const char* data, int size) {
 }
 
 #  if defined(ZmqttDiscovery) && BLEDecoder == true
+
+
+void handleIBeaconDiscovery(JsonObject& BLEdata) {
+  if (!BLEdata.containsKey("uuid") || !BLEdata.containsKey("major") || !BLEdata.containsKey("minor")) return;
+  int major = BLEdata["major"];
+  if (major != 1 && major != 2) return;
+
+  String name = BLEdata["name"];
+  int minor = BLEdata["minor"];
+  const char* mac = BLEdata["id"];
+  String type = major == 1 ? "sensor" : "switch";
+  String macWOdots = String(mac);
+  macWOdots.replace(":", "");
+  String device_id = String("ibeacon_") + macWOdots;
+  device_id.replace(":", "");
+  String state_topic = "BTtoMQTT/" + String(macWOdots) + type;
+
+  
+  createOrUpdateDevice(mac, device_flags_connect, BLEconectable::id::STANDART, 0, name.c_str());
+
+  StaticJsonDocument<JSON_MSG_BUFFER> doc;
+  String configTopic;
+  String payload;
+
+  // Sensor 类型
+  configTopic = "homeassistant/" + type + "/" + device_id + "/config";
+
+  doc["name"] = name + " " + type;
+  doc["uniq_id"] = device_id + type;
+  doc["stat_t"] = state_topic;
+  String cmd_t = String(mqtt_topic) + gateway_name + "/commands/" + device_id + type;
+  doc["cmd_t"] = cmd_t;
+  for (vector<BLEdevice*>::iterator it = devices.begin(); it != devices.end(); ++it) {
+    BLEdevice* p = *it;
+    Log.notice(F("devices: %s %s" CR), p->macAdr, p->command_topic);
+    if ((strcmp(p->macAdr, mac) == 0)) {
+      if (cmd_t.length() < sizeof(p->command_topic)) {
+        strcpy(p->command_topic, cmd_t.c_str());
+      }
+      else {
+        Log.error(F("cmd_t too long!"));
+      }
+      p->sensorModel_id = BLEconectable::id::STANDART;
+      Log.notice(F("set: %s %s" CR), p->macAdr, p->command_topic);
+    }
+  }
+  doc["dev"]["ids"] = macWOdots;
+  doc["dev"]["name"] = BLEdata["name"];
+  doc["dev"]["mf"] = BLEdata["brand"];
+  doc["dev"]["mdl"] = BLEdata["model"];
+  serializeJson(doc, payload);
+  pubMQTT(configTopic.c_str(), payload.c_str(), will_Retain);
+
+  // === 推送当前 state 到 MQTT ===
+  String statePayload = String(minor);
+  pubMQTT(state_topic.c_str(), statePayload.c_str(), false);  // 不需要 retain
+
+}
+
+
 // This function always should be called from the main core as it generates direct mqtt messages
 // When overrideDiscovery=true, we publish discovery messages of known devices (even if no new)
 void launchBTDiscovery(bool overrideDiscovery) {
@@ -1152,7 +1215,6 @@ void process_bledata(JsonObject& BLEdata) {
   Log.trace(F("Processing BLE data %s" CR), BLEdata["id"].as<const char*>());
   int model_id = BTConfig.extDecoderEnable ? -1 : decoder.decodeBLEJson(BLEdata);
   int mac_type = BLEdata["mac_type"].as<int>();
-
   // Convert prmacs to RMACS until or if OMG gets Identity MAC/IRK decoding
   if (BLEdata["prmac"]) {
     BLEdata.remove("prmac");
@@ -1228,6 +1290,8 @@ void PublishDeviceData(JsonObject& BLEdata) {
   if (abs((int)BLEdata["rssi"] | 0) < abs(BTConfig.minRssi)) { // process only the devices close enough
     // Decode the payload
     process_bledata(BLEdata);
+    
+    handleIBeaconDiscovery(BLEdata);
     // If the device is a random MAC and pubRandomMACs is false we don't publish this payload
     if (!BTConfig.pubRandomMACs && (BLEdata["type"].as<string>()).compare("RMAC") == 0) {
       Log.trace(F("Random MAC, device filtered" CR));
@@ -1529,6 +1593,29 @@ void XtoBTAction(JsonObject& BTdata) {
   if (BTdata.containsKey("immediate") && BTdata["immediate"].as<bool>()) {
     startBTActionTask();
   }
+}
+
+bool XtoBT(const char* topicOri, const char* datacallback) {
+  bool res = false;
+  // Log.warning(F("BLE datacallback %s\n" CR), datacallback);
+  for (vector<BLEdevice*>::iterator it = devices.begin(); it != devices.end(); ++it) {
+    BLEdevice* p = *it;
+    if ((strcmp((p)->command_topic, topicOri) == 0)) { // match topic
+      Log.warning(F("find %s\n" CR), p->macAdr);
+      res = true;
+      p->connect = true;
+      BLEAction action{};
+      strcpy(action.addr, p->macAdr);
+      action.addr_type = p->macType;
+      action.ttl = 3;
+      action.write = true;
+      action.value = std::string(datacallback);
+      BLEactions.push_back(action);
+      Log.warning(F("startBTActionTask" CR));
+      startBTActionTask();
+    }
+  }
+  return res;
 }
 
 void XtoBT(const char* topicOri, JsonObject& BTdata) { // json object decoding

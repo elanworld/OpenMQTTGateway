@@ -22,6 +22,13 @@ public:
   virtual NimBLERemoteCharacteristic* getCharacteristic(const NimBLEUUID& service, const NimBLEUUID& characteristic);
 };
 
+class Stand_connect : public zBLEConnect {
+public:
+  Stand_connect(NimBLEAddress& addr) : zBLEConnect(addr) {}
+  bool processActions(std::vector<BLEAction>& actions) override;
+};
+
+
 class LYWSD03MMC_connect : public zBLEConnect {
   void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
 
