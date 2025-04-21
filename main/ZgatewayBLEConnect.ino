@@ -131,16 +131,40 @@ bool zBLEConnect::processActions(std::vector<BLEAction>& actions) {
 
 bool Stand_connect::processActions(std::vector<BLEAction>& actions) {
   bool result = false;
-  if (!m_pClient->isConnected() && !m_pClient->connect(true)) {
-    Log.error(F("Connect to: %s failed" CR), m_pClient->getPeerAddress().toString().c_str());
+  if (!m_pClient) {
+    Log.error(F("m_pClient is NULL"));
+    return false;
+  }
+
+  if (!m_pClient->getPeerAddress()) {
+    Log.error(F("Peer address is NULL"));
     return false;
   }
   for (auto& it : actions) {
-    if (NimBLEAddress(it.addr) != m_pClient->getPeerAddress()) continue;;
-    Log.warning(F("find %s" CR), it.addr);
+    // Ensure 'it.addr' is valid before proceeding
+    if (it.addr == nullptr || strlen(it.addr) == 0) {
+      continue;  // Skip if 'it.addr' is invalid or empty
+    }
+    // Ensure 'NimBLEAddress' works with a valid string
+    if (NimBLEAddress(it.addr) != m_pClient->getPeerAddress()) {
+      continue;  // Skip if the address doesn't match
+    }
+
+    if (m_pClient->isConnected()) {
+    }
+    else {
+
+      NimBLEAddress peerAddr = m_pClient->getPeerAddress();
+      bool result = m_pClient->connect(peerAddr);
+      if (!result) {
+        Log.warning(F("Connect failed to: %s" CR), peerAddr.toString().c_str());
+        return false;
+      }
+
+      Log.trace(F("Connected to: %s" CR), peerAddr.toString().c_str());
+    }
     NimBLERemoteCharacteristic* pChar = nullptr;
 
-    // Case 1: 指定 serviceUUID 和 charUUID
     if (it.service != NimBLEUUID() && it.characteristic != NimBLEUUID()) {
       NimBLEUUID serviceUUID(it.service);
       NimBLEUUID charUUID(it.characteristic);
@@ -150,7 +174,6 @@ bool Stand_connect::processActions(std::vector<BLEAction>& actions) {
       }
     }
 
-    // Case 2: 只指定 charUUID
     else if (it.characteristic != NimBLEUUID()) {
       NimBLEUUID charUUID(it.characteristic);
       auto services = m_pClient->getServices();
@@ -160,28 +183,45 @@ bool Stand_connect::processActions(std::vector<BLEAction>& actions) {
       }
     }
 
-    // Case 3: 没有 UUID，查找唯一 service + 唯一 char
     else {
-      auto services = m_pClient->getServices();
+      auto services = m_pClient->getServices(true);
 
-      Log.notice(F("services %d" CR), services->size());
-      if (services->size() == 1) {
-        NimBLERemoteService* pService = services->at(0);
-        auto chars = pService->getCharacteristics(false);  // true = include hidden
-        Log.notice(F("chars %d" CR), chars->size());
+      Log.trace(F("services %d" CR), services->size());
+
+      // Create a temporary list to hold valid services
+      std::vector<NimBLERemoteService*> validServices;
+
+      // Filter out default Generic Access and Generic Attribute services
+      for (auto* pService : *services) {
+        NimBLEUUID serviceUUID = pService->getUUID();
+        if (serviceUUID != NimBLEUUID((uint16_t)0x1800) && serviceUUID != NimBLEUUID((uint16_t)0x1801)) {
+          validServices.push_back(pService);  // Add valid service to list
+        }
+        else {
+          Log.trace(F("Skipping default service UUID: %s" CR), serviceUUID.toString().c_str());
+        }
+      }
+
+      // After filtering, check if valid services are found
+      if (validServices.empty()) {
+        Log.error(F("No valid services found."));
+        return false;
+      }
+
+      // Process valid services
+      if (validServices.size() == 1) {
+        NimBLERemoteService* pService = validServices.at(0);
+        auto chars = pService->getCharacteristics(true);  // false = exclude hidden
         if (chars->size() == 1) {
           pChar = chars->at(0);
         }
       }
     }
 
-    // 写入数据
     if (pChar && pChar->canWrite()) {
       std::vector<uint8_t> data;
 
-      // 支持字符串、hex、int写入
       if (it.value_type == BLE_VAL_HEX) {
-        // 将 it.value（hex 字符串）解析为 byte 数组
         for (size_t i = 0; i < it.value.length(); i += 2) {
           std::string byteStr = it.value.substr(i, 2);
           uint8_t byte = (uint8_t)strtol(byteStr.c_str(), nullptr, 16);
@@ -193,7 +233,6 @@ bool Stand_connect::processActions(std::vector<BLEAction>& actions) {
         data.push_back(static_cast<uint8_t>(v));
       }
       else {
-        // 默认按字符串写入
         data.assign(it.value.begin(), it.value.end());
       }
 
@@ -203,13 +242,14 @@ bool Stand_connect::processActions(std::vector<BLEAction>& actions) {
       }
     }
     else {
-
       Log.warning(F("not pChar found" CR));
     }
+    it.complete = result;
+    m_pClient->disconnect();
   }
-
   return result;
 }
+
 /*-----------------------LYWSD03MMC && MHO_C401 HANDLING-----------------------*/
 void LYWSD03MMC_connect::notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
   if (m_taskHandle == nullptr) {

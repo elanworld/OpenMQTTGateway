@@ -767,6 +767,7 @@ void BLEconnect() {
                 swap.push_back(it);
               } else if (memcmp(it.addr, p->macAdr, sizeof(it.addr)) == 0) {
                 if (p->sensorModel_id != BLEconectable::id::DT24_BLE &&
+                    p->sensorModel_id != BLEconectable::id::STANDART &&
                     p->sensorModel_id != TheengsDecoder::BLE_ID_NUM::HHCCJCY01HHCC &&
                     p->sensorModel_id != BLEconectable::id::LYWSD03MMC &&
                     p->sensorModel_id != TheengsDecoder::BLE_ID_NUM::BM2 &&
@@ -856,7 +857,7 @@ void setupBTTasksAndBLE() {
 #  if defined(USE_ESP_IDF) || defined(USE_BLUFI)
       14500,
 #  else
-      9500, /* Stack size in bytes */
+      15000, /* Stack size in bytes */ // build in debug mode
 #  endif
       NULL, /* Task input parameter */
       2, /* Priority of the task (set higher than core task) */
@@ -940,7 +941,6 @@ void handleIBeaconDiscovery(JsonObject& BLEdata) {
   String configTopic;
   String payload;
 
-  // Sensor 类型
   configTopic = "homeassistant/" + type + "/" + device_id + "/config";
 
   doc["name"] = name + " " + type;
@@ -969,10 +969,8 @@ void handleIBeaconDiscovery(JsonObject& BLEdata) {
   serializeJson(doc, payload);
   pubMQTT(configTopic.c_str(), payload.c_str(), will_Retain);
 
-  // === 推送当前 state 到 MQTT ===
   String statePayload = String(minor);
-  pubMQTT(state_topic.c_str(), statePayload.c_str(), false);  // 不需要 retain
-
+  pubMQTT(state_topic.c_str(), statePayload.c_str(), false);
 }
 
 
@@ -1412,6 +1410,7 @@ void immediateBTAction(void* pvParameters) {
   if (BLEactions.size()) {
     // Immediate action; we need to prevent the normal connection action and stop scanning
     BTProcessLock = true;
+    delay(100); // wait other bt task to end
     NimBLEScan* pScan = NimBLEDevice::getScan();
     if (pScan->isScanning()) {
       pScan->stop();
